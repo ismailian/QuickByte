@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use quickbyte_core::traits::{
     BrowserIntegrationService, DownloadManager, QueueManager, RemoteFileInfoProvider,
-    SettingsService, StreamResolver, UpdateService, VirusTotalService,
+    SettingsService, SpeedTestService, StreamResolver, UpdateService, VirusTotalService,
 };
 
 #[derive(Clone)]
@@ -22,6 +22,8 @@ pub struct AppServices {
     pub browser: Arc<dyn BrowserIntegrationService>,
     /// The background VirusTotal check (Options > VirusTotal).
     pub virus_total: Arc<dyn VirusTotalService>,
+    /// Tasks > Speed Test.
+    pub speed_test: Arc<dyn SpeedTestService>,
     /// The tokio runtime. The UI thread never blocks on it: it spawns, and the
     /// results come back as events or through a channel a window polls per frame.
     pub runtime: tokio::runtime::Handle,

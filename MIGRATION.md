@@ -50,6 +50,9 @@ doc comments that explain it.
   each download (see §5.6), so nothing is lost. **VirusTotal itself has since
   been written for the Rust build** (`services::virus_total_scanner`), reading
   the 1.26.2 key names it shares; see M9 for the keys it carries but does not use.
+  **One feature is new in the Rust build:** Tasks > Speed Test
+  (`net::speed_test`, `windows::speed_test`). It persists nothing, so it adds
+  no key the C# build would meet, and rolling back stays safe.
 - **No changes to the browser extension.** It talks to the same loopback
   protocol on the same port with the same token, so it keeps working
   unmodified.

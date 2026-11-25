@@ -44,6 +44,7 @@ pub enum Icon {
     RefreshAddress,
     Exit,
     Update,
+    SpeedTest,
     // Sidebar tree and rows
     Folder(Option<Color32>),
     Category(FileCategory),
@@ -54,7 +55,7 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon that takes nothing but a size — the toolbar and menu set.
-    pub const SIMPLE: [Icon; 20] = [
+    pub const SIMPLE: [Icon; 21] = [
         Icon::AddUrl,
         Icon::Resume,
         Icon::Pause,
@@ -75,6 +76,7 @@ impl Icon {
         Icon::RefreshAddress,
         Icon::Exit,
         Icon::Update,
+        Icon::SpeedTest,
     ];
 }
 
@@ -145,6 +147,7 @@ fn draw(g: &Canvas, icon: Icon) {
         Icon::RefreshAddress => refresh_address(g),
         Icon::Exit => exit(g),
         Icon::Update => update(g),
+        Icon::SpeedTest => speed_test(g),
         Icon::Folder(tint) => folder(g, tint),
         Icon::Category(category) => category_icon(g, category),
         Icon::StatusDot(color) => status_dot(g, color),
@@ -784,6 +787,27 @@ fn update(g: &Canvas) {
     let pen = g.stroke(g.s(0.10).max(1.5), WHITE);
     g.line(g.p(0.50, 0.72), g.p(0.50, 0.32), pen);
     g.lines(vec![g.p(0.30, 0.51), g.p(0.50, 0.28), g.p(0.70, 0.51)], pen);
+}
+
+/// A speedometer for Tasks > Speed Test: a dial filled most of the way round,
+/// and its needle well up the scale.
+fn speed_test(g: &Canvas) {
+    let p = theme::palette();
+    let dial = g.r(0.10, 0.14, 0.80, 0.80);
+    let width = g.s(0.11).max(1.4);
+    g.arc(
+        dial,
+        135.0,
+        270.0,
+        g.stroke(width, with_alpha(p.accent, 80)),
+        true,
+    );
+    g.arc(dial, 135.0, 175.0, g.stroke(width, p.accent), true);
+    let c = dial.center();
+    let (angle, reach) = (310.0_f32.to_radians(), dial.width() * 0.32);
+    let tip = c + vec2(angle.cos(), angle.sin()) * reach;
+    g.line(c, tip, g.stroke(g.s(0.08).max(1.2), p.text));
+    g.ellipse(Rect::from_center_size(c, Vec2::splat(g.s(0.16))), p.text);
 }
 
 // --------------------------------------------------------------------------

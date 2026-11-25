@@ -26,15 +26,16 @@ use quickbyte_core::events::{
 use quickbyte_core::helpers::file_checksum::{ChecksumResult, ExpectedChecksum};
 use quickbyte_core::models::{
     AddressChange, ConnectionInfo, DownloadItem, DownloadQueue, DownloadRequest, DownloadSettings,
-    RemoteFileInfo, RequestOptions, StreamFormat, StreamSource, UpdateCheckResult,
-    UpdateDownloadProgress, UpdateManifest, VirusTotalReport, VirusTotalSource, VirusTotalStep,
-    VirusTotalVerdict,
+    RemoteFileInfo, RequestOptions, SpeedTestPhase, SpeedTestProgress, SpeedTestResult,
+    StreamFormat, StreamSource, UpdateCheckResult, UpdateDownloadProgress, UpdateManifest,
+    VirusTotalReport, VirusTotalSource, VirusTotalStep, VirusTotalVerdict,
 };
 use quickbyte_core::serde_compat::{DateTimeOffset, TimeSpan};
 use quickbyte_core::streaming::{StreamChoice, StreamDescription};
 use quickbyte_core::traits::{
     BrowserEvent, BrowserIntegrationService, DownloadManager, ProgressFn, QueueManager,
-    RemoteFileInfoProvider, SettingsService, StreamResolver, UpdateService, VirusTotalService,
+    RemoteFileInfoProvider, SettingsService, SpeedTestService, StreamResolver, UpdateService,
+    VirusTotalService,
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -61,6 +62,7 @@ pub fn services(dispatcher: Arc<dyn Dispatcher>, runtime: tokio::runtime::Handle
         updates: Arc::new(DemoUpdates::default()),
         browser: Arc::new(DemoBrowser::new(dispatcher)),
         virus_total,
+        speed_test: Arc::new(DemoSpeedTest),
         runtime,
     }
 }
@@ -1459,5 +1461,110 @@ pub fn flagged_report() -> VirusTotalReport {
         engines: 71,
         permalink: Some("https://www.virustotal.com/gui/home/url".into()),
         ..Default::default()
+    }
+}
+
+/// Tasks > Speed Test with no network: about fourteen seconds of a believable
+/// line (18 ms, about 240 Mbps down and 42 Mbps up), reported the way the real
+/// test reports it.
+pub struct DemoSpeedTest;
+
+/// Bytes per second the demo line carries.
+const DEMO_DOWNLOAD: f64 = 30.0 * 1_000_000.0;
+const DEMO_UPLOAD: f64 = 5.25 * 1_000_000.0;
+
+async fn sleep_or_cancel(duration: Duration, cancel: &CancellationToken) -> Result<()> {
+    tokio::select! {
+        _ = tokio::time::sleep(duration) => Ok(()),
+        _ = cancel.cancelled() => Err(CoreError::Cancelled),
+    }
+}
+
+/// Six seconds of a phase: TCP's slow start, then the line with a little wobble.
+async fn demo_throughput(
+    state: &mut SpeedTestProgress,
+    phase: SpeedTestPhase,
+    rate: f64,
+    progress: &ProgressFn<SpeedTestProgress>,
+    cancel: &CancellationToken,
+) -> Result<f64> {
+    state.phase = Some(phase);
+    state.phase_fraction = 0.0;
+    state.current_rate = 0.0;
+    progress(state.clone());
+    const STEPS: u32 = 60;
+    for step in 1..=STEPS {
+        sleep_or_cancel(TICK, cancel).await?;
+        let t = f64::from(step) / f64::from(STEPS);
+        let ramp = 1.0 - (-t * 12.0).exp();
+        let wobble = 1.0 + 0.04 * (f64::from(step) * 1.7).sin();
+        state.current_rate = rate * ramp * wobble;
+        state.data_used += (state.current_rate * TICK.as_secs_f64()) as u64;
+        state.phase_fraction = t as f32;
+        progress(state.clone());
+    }
+    state.current_rate = 0.0;
+    Ok(rate * 0.995)
+}
+
+#[async_trait]
+impl SpeedTestService for DemoSpeedTest {
+    async fn run(
+        &self,
+        progress: ProgressFn<SpeedTestProgress>,
+        cancel: &CancellationToken,
+    ) -> Result<SpeedTestResult> {
+        use quickbyte_core::helpers::speed_test::latency_stats;
+
+        let mut state = SpeedTestProgress {
+            phase: Some(SpeedTestPhase::Latency),
+            ..Default::default()
+        };
+        progress(state.clone());
+        sleep_or_cancel(Duration::from_millis(400), cancel).await?;
+        state.server = Some("Frankfurt (FRA)".into());
+        let mut samples = Vec::new();
+        for i in 0..16u64 {
+            sleep_or_cancel(Duration::from_millis(80), cancel).await?;
+            samples.push(Duration::from_micros(16_400 + (i * 2_350) % 4_700));
+            state.latency = latency_stats(&samples);
+            state.phase_fraction = (i + 1) as f32 / 16.0;
+            progress(state.clone());
+        }
+        let download = demo_throughput(
+            &mut state,
+            SpeedTestPhase::Download,
+            DEMO_DOWNLOAD,
+            &progress,
+            cancel,
+        )
+        .await?;
+        state.download = Some(download);
+        let upload = demo_throughput(
+            &mut state,
+            SpeedTestPhase::Upload,
+            DEMO_UPLOAD,
+            &progress,
+            cancel,
+        )
+        .await?;
+        state.upload = Some(upload);
+        state.phase = None;
+        state.phase_fraction = 1.0;
+        progress(state.clone());
+        Ok(SpeedTestResult {
+            latency: state
+                .latency
+                .unwrap_or(quickbyte_core::models::LatencyStats {
+                    median_ms: 18.0,
+                    jitter_ms: 2.0,
+                    min_ms: 16.0,
+                    samples: 0,
+                }),
+            download,
+            upload,
+            server: state.server,
+            data_used: state.data_used,
+        })
     }
 }

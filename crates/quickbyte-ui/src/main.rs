@@ -91,6 +91,7 @@ fn build_services(
     }
     use quickbyte_core::helpers::app_user_agent;
     use quickbyte_core::net::app_proxy::AppProxy;
+    use quickbyte_core::net::speed_test::SpeedTestClient;
     use quickbyte_core::net::virus_total::VirusTotalClient;
     use quickbyte_core::services::virus_total_scanner::{ScannerOptions, VirusTotalScanner};
     use quickbyte_core::services::{
@@ -183,6 +184,7 @@ fn build_services(
         updates,
         browser,
         virus_total,
+        speed_test: Arc::new(SpeedTestClient::new()),
         runtime,
     }
 }

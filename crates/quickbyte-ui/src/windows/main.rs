@@ -483,6 +483,9 @@ impl MainWindow {
                 if controls::menu_item(ui, Some(Icon::Queue), "Queues & Scheduler...", None, true) {
                     cx.open(DialogRequest::Queues);
                 }
+                if controls::menu_item(ui, Some(Icon::SpeedTest), "Speed Test...", None, true) {
+                    cx.open(DialogRequest::SpeedTest);
+                }
                 if controls::menu_item(ui, Some(Icon::Settings), "Options...", None, true) {
                     cx.open(DialogRequest::Settings);
                 }

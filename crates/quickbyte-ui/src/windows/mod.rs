@@ -40,6 +40,7 @@ pub mod prompt;
 pub mod queues;
 pub mod refresh_address;
 pub mod settings;
+pub mod speed_test;
 pub mod update;
 pub mod virus_total;
 
@@ -75,6 +76,7 @@ pub enum WindowKind {
     PowerCountdown,
     /// VirusTotal flagged a download and asks what to do with it; one per download.
     VirusTotal(Uuid),
+    SpeedTest,
 }
 
 impl WindowKind {
@@ -109,6 +111,8 @@ pub enum DialogRequest {
     Checksum(Uuid),
     RefreshAddress(Uuid),
     About,
+    /// Tasks > Speed Test. The test starts as the window opens.
+    SpeedTest,
     /// The countdown before a power action. `reason`: "x.iso finished downloading".
     PowerCountdown {
         action: PowerAction,
@@ -281,6 +285,7 @@ pub fn build_dialog(
             shell.clipboard_text(),
         )),
         DialogRequest::About => Box::new(about::AboutWindow),
+        DialogRequest::SpeedTest => Box::new(speed_test::SpeedTestWindow::new()),
         DialogRequest::PowerCountdown {
             action,
             reason,

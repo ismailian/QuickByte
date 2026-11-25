@@ -10,6 +10,7 @@ mod download_queue;
 mod download_settings;
 mod misc;
 mod proxy_settings;
+mod speed_test;
 mod virus_total;
 
 pub use download_item::*;
@@ -17,6 +18,7 @@ pub use download_queue::*;
 pub use download_settings::*;
 pub use misc::*;
 pub use proxy_settings::*;
+pub use speed_test::*;
 pub use virus_total::*;
 
 /// Keys a persisted object carried that this build does not model — read,

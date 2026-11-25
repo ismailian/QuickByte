@@ -24,6 +24,7 @@ pub mod retry_policy;
 pub mod secret_protector;
 pub mod settings_keys;
 pub mod speed_calculator;
+pub mod speed_test;
 pub mod url_credentials;
 pub mod user_path;
 pub mod virus_total;

@@ -17,7 +17,8 @@ use crate::helpers::file_checksum::{ChecksumResult, ExpectedChecksum};
 use crate::helpers::virus_total::ScanResult;
 use crate::models::{
     AddressChange, CapturedDownload, ConnectionInfo, DownloadItem, DownloadQueue, DownloadRequest, DownloadSettings,
-    RemoteFileInfo, RequestOptions, UpdateCheckResult, UpdateDownloadProgress, UpdateManifest,
+    RemoteFileInfo, RequestOptions, SpeedTestProgress, SpeedTestResult, UpdateCheckResult, UpdateDownloadProgress,
+    UpdateManifest,
 };
 use crate::streaming::StreamDescription;
 
@@ -373,6 +374,20 @@ pub trait VirusTotalService: Send + Sync {
     fn resolve(&self, download_id: Uuid, keep: bool);
     /// Whether VirusTotal accepts `api_key` — Options' Check button.
     async fn check_api_key(&self, api_key: &str, cancel: &CancellationToken) -> Result<()>;
+}
+
+// ---------------------------------------------------------------------------
+// Speed test
+// ---------------------------------------------------------------------------
+
+/// Tasks > Speed Test: the connection measured, latency first, then download,
+/// then upload.
+#[async_trait]
+pub trait SpeedTestService: Send + Sync {
+    /// Runs one test. `progress` is called from worker tasks several times a
+    /// second, each call carrying every figure measured so far — so a failure
+    /// part way through still leaves the earlier phases' figures with the caller.
+    async fn run(&self, progress: ProgressFn<SpeedTestProgress>, cancel: &CancellationToken) -> Result<SpeedTestResult>;
 }
 
 // ---------------------------------------------------------------------------

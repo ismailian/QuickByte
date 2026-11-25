@@ -10,5 +10,6 @@ pub mod proxy_tunnel;
 pub mod remote_file_info_provider;
 pub mod request_decorator;
 pub mod segment_range;
+pub mod speed_test;
 pub mod sspi;
 pub mod virus_total;

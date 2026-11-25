@@ -385,6 +385,7 @@ impl UiState {
                 return;
             }
             "about" => DialogRequest::About,
+            "speed-test" => DialogRequest::SpeedTest,
             // A flagged download's question, on the first running download.
             "virustotal" => {
                 let Some(item) = self.vm.items().find(|i| i.status == DownloadStatus::Downloading) else {

@@ -1,6 +1,7 @@
 //! The networking half of the C# `QuickByte.Core.Tests` suite, against local
 //! servers: the HTTP connection, the probe, sign-in handshakes, the proxy and
-//! its tunnels, FTP, the update check, the browser bridge and playlist fetching.
+//! its tunnels, FTP, the update check, the browser bridge, playlist fetching
+//! and the speed test.
 
 mod support;
 
@@ -18,6 +19,8 @@ mod proxy;
 mod remote_file_info_provider;
 #[path = "networking/streaming.rs"]
 mod streaming;
+#[path = "networking/speed_test.rs"]
+mod speed_test;
 #[path = "networking/update_service.rs"]
 mod update_service;
 #[path = "networking/virus_total.rs"]
