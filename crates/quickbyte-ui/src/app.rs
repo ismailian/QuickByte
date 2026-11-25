@@ -680,6 +680,10 @@ impl UiState {
                     url: None,
                     captured: None,
                 })),
+            // On its own too: a quick check of the line needs no download list.
+            TrayEvent::SpeedTest => self
+                .commands
+                .push(AppCommand::Open(DialogRequest::SpeedTest)),
             TrayEvent::PauseAll => self.pause_everything(),
             TrayEvent::ResumeAll => self.resume_all(),
             TrayEvent::Exit => self.exit(),

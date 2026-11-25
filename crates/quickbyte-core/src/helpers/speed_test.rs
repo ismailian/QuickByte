@@ -100,6 +100,9 @@ pub fn server_location(colo: Option<&str>, city: Option<&str>, cf_ray: Option<&s
 #[derive(Clone, Debug)]
 pub struct ThroughputMeter {
     warmup: Duration,
+    /// The warm-up also ends once this many bytes are in, so a phase capped by
+    /// bytes on a fast line still has a stretch after it to measure.
+    warmup_bytes: u64,
     /// Readings inside the live window, oldest first, plus the one just before it.
     recent: VecDeque<(Duration, u64)>,
     /// The first reading at or after the end of the warm-up.
@@ -110,7 +113,13 @@ pub struct ThroughputMeter {
 impl ThroughputMeter {
     pub fn new(warmup: Duration) -> Self {
         let start = (Duration::ZERO, 0);
-        Self { warmup, recent: VecDeque::from([start]), baseline: None, last: start }
+        Self { warmup, warmup_bytes: u64::MAX, recent: VecDeque::from([start]), baseline: None, last: start }
+    }
+
+    /// Ends the warm-up early, once `bytes` are in.
+    pub fn with_warmup_bytes(mut self, bytes: u64) -> Self {
+        self.warmup_bytes = bytes;
+        self
     }
 
     /// The counter read `elapsed` after the phase began. A reading earlier than
@@ -120,7 +129,7 @@ impl ThroughputMeter {
             return;
         }
         self.last = (elapsed, total_bytes);
-        if self.baseline.is_none() && elapsed >= self.warmup {
+        if self.baseline.is_none() && (elapsed >= self.warmup || total_bytes >= self.warmup_bytes) {
             self.baseline = Some(self.last);
         }
         self.recent.push_back(self.last);
@@ -277,6 +286,15 @@ mod tests {
         meter.record(Duration::from_millis(500), 1_000_000);
         assert_eq!(meter.result(), Some(2_000_000.0));
         assert_eq!(meter.current(), 2_000_000.0);
+    }
+
+    #[test]
+    fn a_byte_capped_warm_up_ends_at_its_bytes() {
+        let mut meter = ThroughputMeter::new(Duration::from_secs(2)).with_warmup_bytes(5_000_000);
+        meter.record(Duration::from_millis(500), 5_000_000);
+        // 10 MB/s after the first 5 MB, well inside the two seconds.
+        meter.record(Duration::from_millis(1500), 15_000_000);
+        assert_eq!(meter.result(), Some(10_000_000.0));
     }
 
     #[test]

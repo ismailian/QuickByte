@@ -27,7 +27,6 @@ use quickbyte_core::traits::ProgressFn;
 use tokio_util::sync::CancellationToken;
 
 use super::{AppWindow, WindowCx, WindowKind};
-use crate::icons::Icon;
 use crate::services::Pending;
 use crate::shell::Waker;
 use crate::theme;
@@ -42,8 +41,8 @@ const SCALE: [f64; 8] = [0.0, 5.0, 10.0, 50.0, 100.0, 250.0, 500.0, 1000.0];
 /// The dial sweeps 270°, clockwise from the bottom left (y points down).
 const DIAL_START: f32 = 135.0;
 const DIAL_SWEEP: f32 = 270.0;
-const DIAL_WIDTH: f32 = 10.0;
-const DIAL_SIZE: Vec2 = vec2(200.0, 164.0);
+const DIAL_WIDTH: f32 = 8.0;
+const DIAL_SIZE: Vec2 = vec2(150.0, 124.0);
 
 /// Upload's colour: the app's purple (the Compressed badge), set apart from
 /// download's accent.
@@ -187,8 +186,9 @@ impl SpeedTestWindow {
         }
     }
 
-    /// The dial's colour, and what its centre reads: value, unit, caption.
-    fn readout(&self) -> (Color32, String, &'static str, &'static str) {
+    /// The dial's colour, and what its centre reads: value and unit. Which
+    /// phase it shows is said beside it, where that phase's figure says "measuring…".
+    fn readout(&self) -> (Color32, String, &'static str) {
         let p = theme::palette();
         let running = self.is_running();
         match self.shown.phase {
@@ -198,36 +198,35 @@ impl SpeedTestWindow {
                     .latency
                     .map_or_else(|| "—".into(), |l| format_ms(l.median_ms)),
                 "ms",
-                "Ping",
             ),
             Some(SpeedTestPhase::Download) if running => (
                 p.accent,
                 format_megabits(self.shown.current_rate),
                 "Mbps",
-                "Download",
             ),
             Some(SpeedTestPhase::Upload) if running => (
                 UPLOAD,
                 format_megabits(self.shown.current_rate),
                 "Mbps",
-                "Upload",
             ),
             _ => match (&self.run, self.shown.download) {
                 (Some(Run::Done), Some(download)) => {
-                    (p.accent, format_megabits(download), "Mbps", "Download")
+                    (p.accent, format_megabits(download), "Mbps")
                 }
-                _ => (p.accent, "—".into(), "Mbps", ""),
+                _ => (p.accent, "—".into(), "Mbps"),
             },
         }
     }
 
-    fn subtitle(&self) -> String {
+    /// The window title: which server answered, once one has, and whether the
+    /// test goes through the proxy in Options.
+    fn window_title(&self) -> String {
         let mut text = match &self.shown.server {
-            Some(server) => format!("Cloudflare · {server}"),
-            None => "Measures your connection against Cloudflare's nearest server".into(),
+            Some(server) => format!("Speed Test — Cloudflare · {server}"),
+            None => "Speed Test — Cloudflare".into(),
         };
         if self.through_proxy {
-            text.push_str(" · through the proxy in Options");
+            text.push_str(" · via proxy");
         }
         text
     }
@@ -309,7 +308,7 @@ impl SpeedTestWindow {
             "ms",
             ping.map(|l| format!("jitter {} ms", format_ms(l.jitter_ms))),
         );
-        ui.add_space(8.0);
+        ui.add_space(4.0);
         let download = match phase {
             Some(SpeedTestPhase::Download) => Some(self.shown.current_rate),
             _ => self.shown.download,
@@ -326,7 +325,7 @@ impl SpeedTestWindow {
             "Mbps",
             download.map(format_speed),
         );
-        ui.add_space(8.0);
+        ui.add_space(4.0);
         let upload = match phase {
             Some(SpeedTestPhase::Upload) => Some(self.shown.current_rate),
             _ => self.shown.upload,
@@ -354,7 +353,7 @@ impl SpeedTestWindow {
         let radius = ((rect.height() - 2.0 * pad) / (1.0 + std::f32::consts::FRAC_1_SQRT_2))
             .min(rect.width() / 2.0 - pad);
         let center = pos2(rect.center().x, rect.top() + pad + radius);
-        let (color, value, unit, caption) = self.readout();
+        let (color, value, unit) = self.readout();
 
         arc(&painter, center, radius, DIAL_START, DIAL_SWEEP, p.track);
         if self.dial > 0.0005 {
@@ -375,7 +374,7 @@ impl SpeedTestWindow {
                 at,
                 Align2::CENTER_CENTER,
                 format!("{mark:.0}"),
-                FontId::proportional(9.5),
+                FontId::proportional(9.0),
                 p.text_disabled,
             );
         }
@@ -383,22 +382,15 @@ impl SpeedTestWindow {
             center + vec2(0.0, -4.0),
             Align2::CENTER_CENTER,
             value,
-            FontId::new(28.0, theme::semibold_family()),
+            FontId::new(22.0, theme::semibold_family()),
             p.text,
         );
         painter.text(
-            center + vec2(0.0, 18.0),
+            center + vec2(0.0, 14.0),
             Align2::CENTER_CENTER,
             unit,
             theme::small(),
             p.text_muted,
-        );
-        painter.text(
-            center + vec2(0.0, radius * 0.62),
-            Align2::CENTER_CENTER,
-            caption,
-            theme::small_strong(),
-            color,
         );
     }
 }
@@ -509,13 +501,13 @@ impl AppWindow for SpeedTestWindow {
     fn builder(&self, _vm: &ViewModel) -> ViewportBuilder {
         ViewportBuilder::default()
             .with_title("Speed Test")
-            .with_inner_size(vec2(520.0, 332.0))
+            .with_inner_size(vec2(440.0, 262.0))
             .with_resizable(false)
             .with_maximize_button(false)
     }
 
     fn title(&self, _vm: &ViewModel) -> String {
-        "Speed Test".into()
+        self.window_title()
     }
 
     fn is_animating(&self) -> bool {
@@ -530,13 +522,6 @@ impl AppWindow for SpeedTestWindow {
         self.ease_dial(cx.dt);
         let p = theme::palette();
 
-        form::header(
-            ui,
-            "speed-header",
-            Icon::SpeedTest,
-            "Speed Test",
-            &self.subtitle(),
-        );
         let running = self.is_running();
         let (mut again, mut stop, mut close) = (false, false, false);
         controls::footer(ui, "speed-footer", |ui| {
@@ -556,15 +541,14 @@ impl AppWindow for SpeedTestWindow {
             Margin {
                 left: 16,
                 right: 16,
-                top: 10,
+                top: 12,
                 bottom: 8,
             },
             |ui| {
                 ui.horizontal_top(|ui| {
                     self.paint_dial(ui);
-                    ui.add_space(18.0);
+                    ui.add_space(16.0);
                     ui.vertical(|ui| {
-                        ui.add_space(14.0);
                         self.results(ui);
                     });
                 });

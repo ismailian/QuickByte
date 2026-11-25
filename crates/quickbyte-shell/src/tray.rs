@@ -71,6 +71,8 @@ pub enum TrayEvent {
     /// Left click / double click / "Open QuickByte".
     Open,
     AddUrl,
+    /// Tasks > Speed Test, without opening the main window first.
+    SpeedTest,
     PauseAll,
     ResumeAll,
     /// The user chose Exit — the only path that closes the application for real.
@@ -102,6 +104,7 @@ const ID_ADD_URL: u32 = 2;
 const ID_PAUSE_ALL: u32 = 3;
 const ID_RESUME_ALL: u32 = 4;
 const ID_EXIT: u32 = 5;
+const ID_SPEED_TEST: u32 = 6;
 
 /// The tray icon, owned by a hidden window on its own thread. The same window
 /// receives balloon clicks, `TaskbarCreated` (the icon is re-added when Explorer
@@ -553,6 +556,7 @@ fn show_menu(hwnd: HWND, can_pause: bool, can_resume: bool, anchor: POINT) -> Op
         };
         item(menu, ID_OPEN, "&Open QuickByte", true);
         item(menu, ID_ADD_URL, "Add &URL...", true);
+        item(menu, ID_SPEED_TEST, "&Speed Test...", true);
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
         item(menu, ID_PAUSE_ALL, "&Pause All", can_pause);
         item(menu, ID_RESUME_ALL, "&Resume All", can_resume);
@@ -575,6 +579,7 @@ fn show_menu(hwnd: HWND, can_pause: bool, can_resume: bool, anchor: POINT) -> Op
         match chosen {
             ID_OPEN => Some(TrayEvent::Open),
             ID_ADD_URL => Some(TrayEvent::AddUrl),
+            ID_SPEED_TEST => Some(TrayEvent::SpeedTest),
             ID_PAUSE_ALL => Some(TrayEvent::PauseAll),
             ID_RESUME_ALL => Some(TrayEvent::ResumeAll),
             ID_EXIT => Some(TrayEvent::Exit),

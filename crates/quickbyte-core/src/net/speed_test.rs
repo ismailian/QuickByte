@@ -54,12 +54,30 @@ pub const CLOUDFLARE: &str = "https://speed.cloudflare.com";
 pub const DOWNLOAD_CHUNK: u64 = 25_000_000;
 /// What one upload request sends. Cloudflare's own test sends up to 50 MB.
 pub const UPLOAD_CHUNK: u64 = 10_000_000;
+/// The most a whole test moves, both ways: half for the download phase, half
+/// for the upload. A phase ends at its half or its time, whichever comes first,
+/// so a fast line is measured in a few seconds rather than costing a gigabyte.
+/// The latency probes add a few kilobytes on top.
+pub const DATA_BUDGET: u64 = 40_000_000;
+/// The share of a phase's bytes left out of its result as the warm-up, when the
+/// bytes run out before the warm-up's time does.
+const WARMUP_SHARE: u64 = 4;
 /// The piece an upload body is handed over in, and so how often its count moves.
 const UPLOAD_PIECE: usize = 64 * 1024;
+/// Dropped connections in a row one worker rides out before it gives up. A
+/// connection reset part way through a phase is common on a busy line, and a
+/// phase that died with it would throw away a test the other connections were
+/// still measuring.
+const WORKER_RETRIES: u32 = 3;
+/// The pause before a worker opens its connection again.
+const RETRY_PAUSE: Duration = Duration::from_millis(250);
 
 pub const NO_DATA: &str = "The speed test server sent no data.";
 pub const RATE_LIMITED: &str = "The speed test server is limiting tests from this address. Try again in a few minutes.";
 pub const NO_ANSWER: &str = "The speed test server did not answer in time.";
+pub const UNREACHABLE: &str = "Could not reach the speed test server. Check the connection and try again.";
+/// Ends "The download test stopped: …" or "The upload test stopped: …".
+pub const CONNECTION_LOST: &str = "the connection to the server kept dropping.";
 
 #[derive(Clone, Debug)]
 pub struct SpeedTestOptions {
@@ -77,6 +95,8 @@ pub struct SpeedTestOptions {
     pub probe_timeout: Duration,
     /// How often the byte counters are read, and progress reported.
     pub sample_interval: Duration,
+    /// The most the download and upload phases move together; see [`DATA_BUDGET`].
+    pub data_budget: u64,
 }
 
 impl Default for SpeedTestOptions {
@@ -92,6 +112,7 @@ impl Default for SpeedTestOptions {
             upload_chunk: UPLOAD_CHUNK,
             probe_timeout: Duration::from_secs(10),
             sample_interval: Duration::from_millis(100),
+            data_budget: DATA_BUDGET,
         }
     }
 }
@@ -169,13 +190,14 @@ impl SpeedTestClient {
     async fn throughput<W, F>(
         &self,
         duration: Duration,
+        budget: u64,
         worker: W,
         state: &mut SpeedTestProgress,
         progress: &ProgressFn<SpeedTestProgress>,
         cancel: &CancellationToken,
     ) -> Result<(f64, u64)>
     where
-        W: Fn(Arc<AtomicU64>, CancellationToken) -> F,
+        W: Fn(Arc<AtomicU64>, Budget) -> F,
         F: Future<Output = Result<()>> + Send + 'static,
     {
         let duration = duration.max(Duration::from_millis(1));
@@ -183,11 +205,13 @@ impl SpeedTestClient {
         let stop = cancel.child_token();
         let mut workers = JoinSet::new();
         for _ in 0..self.options.connections.max(1) {
-            workers.spawn(worker(Arc::clone(&counter), stop.clone()));
+            workers.spawn(worker(Arc::clone(&counter), Budget { limit: budget, stop: stop.clone() }));
         }
         let data_before = state.data_used;
         let started = Instant::now();
-        let mut meter = ThroughputMeter::new(self.options.warmup);
+        let workers_total = self.options.connections.max(1);
+        let mut workers_failed = 0;
+        let mut meter = ThroughputMeter::new(self.options.warmup).with_warmup_bytes(budget / WARMUP_SHARE);
         let mut ticker = tokio::time::interval(self.options.sample_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let outcome = loop {
@@ -197,13 +221,30 @@ impl SpeedTestClient {
                 Some(joined) = workers.join_next() => match joined {
                     // A worker only ends by itself on an error: it is told when to stop.
                     Ok(Ok(())) => {}
-                    Ok(Err(error)) => break Err(error),
+                    // The server refused (a 429, say): the other connections will be refused too.
+                    Ok(Err(error @ CoreError::Http { status: Some(_), .. })) => break Err(error),
+                    // One connection lost for good: the rest carry the phase, unless none are left.
+                    Ok(Err(error)) => {
+                        workers_failed += 1;
+                        if workers_failed == workers_total {
+                            break Err(error);
+                        }
+                    }
                     Err(failed) => break Err(CoreError::other(failed.to_string())),
                 },
+                // The workers stop themselves once the phase's bytes are spent.
+                _ = stop.cancelled() => {
+                    meter.record(started.elapsed(), counter.load(Ordering::Relaxed));
+                    state.data_used = data_before + meter.total_bytes();
+                    break Ok(());
+                }
                 _ = ticker.tick() => {
                     let elapsed = started.elapsed();
                     meter.record(elapsed, counter.load(Ordering::Relaxed));
-                    state.phase_fraction = (elapsed.as_secs_f64() / duration.as_secs_f64()).min(1.0) as f32;
+                    // Time or bytes, whichever ends the phase first.
+                    let by_time = elapsed.as_secs_f64() / duration.as_secs_f64();
+                    let by_bytes = meter.total_bytes() as f64 / budget as f64;
+                    state.phase_fraction = by_time.max(by_bytes).min(1.0) as f32;
                     state.current_rate = meter.current();
                     state.data_used = data_before + meter.total_bytes();
                     progress(state.clone());
@@ -238,9 +279,10 @@ impl SpeedTestService for SpeedTestClient {
         state.phase_fraction = 0.0;
         progress(state.clone());
         let url = format!("{}/__down?bytes={}", self.base, self.options.download_chunk.max(1));
-        let receive = |counter, stop| download_worker(client.clone(), url.clone(), Arc::clone(&proxy), counter, stop);
+        let budget = (self.options.data_budget / 2).max(1);
+        let receive = |counter, budget| download_worker(client.clone(), url.clone(), Arc::clone(&proxy), counter, budget);
         let (download, _) = self
-            .throughput(self.options.download_time, receive, &mut state, &progress, cancel)
+            .throughput(self.options.download_time, budget, receive, &mut state, &progress, cancel)
             .await
             .map_err(|e| in_phase(SpeedTestPhase::Download, e))?;
         state.download = Some(download);
@@ -252,11 +294,11 @@ impl SpeedTestService for SpeedTestClient {
         let url = format!("{}/__up", self.base);
         let piece: Bytes = (0..UPLOAD_PIECE).map(|_| rand::random::<u8>()).collect::<Vec<u8>>().into();
         let size = self.options.upload_chunk.max(1);
-        let send = |counter, stop| {
-            upload_worker(client.clone(), url.clone(), Arc::clone(&proxy), counter, stop, piece.clone(), size)
+        let send = |counter, budget| {
+            upload_worker(client.clone(), url.clone(), Arc::clone(&proxy), counter, budget, piece.clone(), size)
         };
         let (upload, _) = self
-            .throughput(self.options.upload_time, send, &mut state, &progress, cancel)
+            .throughput(self.options.upload_time, budget, send, &mut state, &progress, cancel)
             .await
             .map_err(|e| in_phase(SpeedTestPhase::Upload, e))?;
         state.upload = Some(upload);
@@ -276,36 +318,77 @@ async fn download_worker(
     url: String,
     proxy: Arc<AppProxy>,
     counter: Arc<AtomicU64>,
-    stop: CancellationToken,
+    budget: Budget,
 ) -> Result<()> {
+    let stop = budget.stop.clone();
+    let mut dropped = 0;
     loop {
         let request = client.get(&url).header(CACHE_CONTROL, "no-store");
         let mut response = tokio::select! {
             biased;
             _ = stop.cancelled() => return Ok(()),
-            sent = request.send() => sent.map_err(|e| map_reqwest_error(&e, &proxy))?,
+            sent = request.send() => match sent {
+                Ok(response) => response,
+                Err(e) => {
+                    retry_after_drop(&mut dropped, map_reqwest_error(&e, &proxy), &stop).await?;
+                    continue;
+                }
+            },
         };
         check_status(response.status())?;
         let mut received = 0u64;
+        let mut lost = None;
         loop {
             let chunk = tokio::select! {
                 biased;
                 _ = stop.cancelled() => return Ok(()),
-                chunk = response.chunk() => chunk.map_err(|e| map_reqwest_error(&e, &proxy))?,
+                chunk = response.chunk() => chunk,
             };
             match chunk {
-                Some(bytes) => {
+                Ok(Some(bytes)) => {
                     received += bytes.len() as u64;
-                    counter.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                    if budget.spend(&counter, bytes.len() as u64) {
+                        return Ok(());
+                    }
                 }
-                None => break,
+                Ok(None) => break,
+                Err(e) => {
+                    lost = Some(map_reqwest_error(&e, &proxy));
+                    break;
+                }
             }
+        }
+        if received > 0 {
+            dropped = 0;
+        }
+        if let Some(error) = lost {
+            retry_after_drop(&mut dropped, error, &stop).await?;
+            continue;
         }
         // An empty answer, asked again at once, would be a busy loop against the server.
         if received == 0 {
             return Err(CoreError::other(NO_DATA));
         }
     }
+}
+
+/// After a dropped connection: waits a moment and lets the worker open another,
+/// or hands back the error once it has dropped [`WORKER_RETRIES`] times in a
+/// row. A stop while waiting is a clean end.
+async fn retry_after_drop(dropped: &mut u32, error: CoreError, stop: &CancellationToken) -> Result<()> {
+    if matches!(error, CoreError::Cancelled | CoreError::ProxyAuthentication(_)) {
+        return Err(error);
+    }
+    *dropped += 1;
+    if *dropped > WORKER_RETRIES {
+        return Err(error);
+    }
+    tokio::select! {
+        biased;
+        _ = stop.cancelled() => {}
+        _ = tokio::time::sleep(RETRY_PAUSE) => {}
+    }
+    Ok(())
 }
 
 /// One connection of the upload phase: a body of `size` random bytes, then
@@ -315,10 +398,12 @@ async fn upload_worker(
     url: String,
     proxy: Arc<AppProxy>,
     counter: Arc<AtomicU64>,
-    stop: CancellationToken,
+    budget: Budget,
     piece: Bytes,
     size: u64,
 ) -> Result<()> {
+    let stop = budget.stop.clone();
+    let mut dropped = 0;
     loop {
         let request = client
             .post(&url)
@@ -327,37 +412,69 @@ async fn upload_worker(
             // A stated length rather than a chunked body: a plain upload is what
             // every server and proxy takes.
             .header(CONTENT_LENGTH, size)
-            .body(counting_body(piece.clone(), size, Arc::clone(&counter)));
+            .body(counting_body(piece.clone(), size, Arc::clone(&counter), budget.clone()));
         let response = tokio::select! {
             biased;
             _ = stop.cancelled() => return Ok(()),
-            sent = request.send() => sent.map_err(|e| map_reqwest_error(&e, &proxy))?,
+            sent = request.send() => match sent {
+                Ok(response) => response,
+                Err(e) => {
+                    retry_after_drop(&mut dropped, map_reqwest_error(&e, &proxy), &stop).await?;
+                    continue;
+                }
+            },
         };
         check_status(response.status())?;
-        tokio::select! {
+        let body = tokio::select! {
             biased;
             _ = stop.cancelled() => return Ok(()),
-            body = response.bytes() => { body.map_err(|e| map_reqwest_error(&e, &proxy))?; }
+            body = response.bytes() => body,
+        };
+        match body {
+            Ok(_) => dropped = 0,
+            Err(e) => retry_after_drop(&mut dropped, map_reqwest_error(&e, &proxy), &stop).await?,
         }
     }
 }
 
 /// `size` bytes of `piece` repeated, adding each piece to `counter` as the
-/// connection asks for it.
-fn counting_body(piece: Bytes, size: u64, counter: Arc<AtomicU64>) -> reqwest::Body {
+/// connection asks for it. Once the phase's bytes are spent the stop is
+/// called, and the worker drops the request.
+fn counting_body(piece: Bytes, size: u64, counter: Arc<AtomicU64>, budget: Budget) -> reqwest::Body {
     let pieces = futures::stream::unfold(size, move |left| {
         let piece = piece.clone();
         let counter = Arc::clone(&counter);
+        let budget = budget.clone();
         async move {
             if left == 0 {
                 return None;
             }
             let take = left.min(piece.len() as u64) as usize;
-            counter.fetch_add(take as u64, Ordering::Relaxed);
+            budget.spend(&counter, take as u64);
             Some((Ok::<Bytes, std::io::Error>(piece.slice(..take)), left - take as u64))
         }
     });
     reqwest::Body::wrap_stream(pieces)
+}
+
+/// What a phase may move, shared by its workers, and the stop that ends it.
+#[derive(Clone)]
+struct Budget {
+    limit: u64,
+    stop: CancellationToken,
+}
+
+impl Budget {
+    /// Counts `bytes` moved; once the phase's limit is reached, stops every
+    /// worker of the phase and returns true.
+    fn spend(&self, counter: &AtomicU64, bytes: u64) -> bool {
+        let total = counter.fetch_add(bytes, Ordering::Relaxed) + bytes;
+        if total >= self.limit {
+            self.stop.cancel();
+            return true;
+        }
+        false
+    }
 }
 
 fn check_status(status: StatusCode) -> Result<()> {
@@ -379,9 +496,11 @@ fn in_phase(phase: SpeedTestPhase, error: CoreError) -> CoreError {
         CoreError::Cancelled | CoreError::ProxyAuthentication(_) | CoreError::Http { status: Some(_), .. } => error,
         CoreError::Timeout => CoreError::other(NO_ANSWER),
         error if error.to_string() == NO_DATA => error,
-        error => match phase {
-            SpeedTestPhase::Latency => CoreError::other(format!("Could not reach the speed test server: {error}")),
-            _ => CoreError::other(format!("The {} test stopped: {error}", phase.name())),
+        // A transport failure's own text is a chain of library messages: too
+        // long for the window, and no help to the person reading it.
+        _ => match phase {
+            SpeedTestPhase::Latency => CoreError::other(UNREACHABLE),
+            _ => CoreError::other(format!("The {} test stopped: {CONNECTION_LOST}", phase.name())),
         },
     }
 }

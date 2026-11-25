@@ -3,12 +3,15 @@
 //! it stops — on a refusal, an empty answer, an unreachable server, or Cancel.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use quickbyte_core::error::CoreError;
 use quickbyte_core::models::{SpeedTestPhase, SpeedTestProgress};
-use quickbyte_core::net::speed_test::{NO_DATA, RATE_LIMITED, SpeedTestClient, SpeedTestOptions};
+use quickbyte_core::net::speed_test::{
+    CONNECTION_LOST, NO_DATA, RATE_LIMITED, SpeedTestClient, SpeedTestOptions, UNREACHABLE,
+};
 use quickbyte_core::traits::{ProgressFn, SpeedTestService};
 use tokio_util::sync::CancellationToken;
 
@@ -28,6 +31,7 @@ fn quick() -> SpeedTestOptions {
         upload_chunk: CHUNK,
         probe_timeout: Duration::from_secs(5),
         sample_interval: Duration::from_millis(20),
+        data_budget: u64::MAX,
     }
 }
 
@@ -156,7 +160,7 @@ async fn an_unreachable_server_says_so() {
 
     let error = client.run(recorder().0, &CancellationToken::new()).await.unwrap_err();
 
-    assert!(error.to_string().starts_with("Could not reach the speed test server: "), "{error}");
+    assert_eq!(error.to_string(), UNREACHABLE);
 }
 
 #[tokio::test]
@@ -177,4 +181,72 @@ async fn cancel_stops_a_running_phase_at_once() {
 
     assert!(matches!(error, CoreError::Cancelled), "{error}");
     assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[tokio::test]
+async fn a_dropped_connection_is_ridden_out() {
+    // The first download and the first upload each lose their connection part
+    // way through, as a reset on a busy line does; the test carries on.
+    let (downs, ups) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let server = TestServer::start(move |asked, _| {
+        let path = asked.path.as_str();
+        if path.starts_with("/__down?bytes=") && path != "/__down?bytes=0" && downs.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Reply::ok(&vec![0u8; 1024]).declared(CHUNK);
+        }
+        if path == "/__up" && ups.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Reply::hang_up();
+        }
+        speed_server(asked)
+    })
+    .await;
+    let client = SpeedTestClient::with(&server.url(""), direct_client(), quick());
+
+    let result = client.run(recorder().0, &CancellationToken::new()).await.unwrap();
+
+    assert!(result.download > 0.0 && result.upload > 0.0);
+}
+
+#[tokio::test]
+async fn a_connection_that_keeps_dropping_stops_the_phase_in_plain_words() {
+    let server = TestServer::start(|asked, _| {
+        if asked.path.starts_with("/__down?bytes=") && asked.path != "/__down?bytes=0" {
+            Reply::hang_up()
+        } else {
+            speed_server(asked)
+        }
+    })
+    .await;
+    // Long enough that the connections give up before the phase's time is up.
+    let options = SpeedTestOptions { download_time: Duration::from_secs(10), ..quick() };
+    let client = SpeedTestClient::with(&server.url(""), direct_client(), options);
+
+    let started = Instant::now();
+    let error = client.run(recorder().0, &CancellationToken::new()).await.unwrap_err();
+
+    assert_eq!(error.to_string(), format!("The download test stopped: {CONNECTION_LOST}"));
+    // Every connection gave up after a few tries, well before the phase's time.
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[tokio::test]
+async fn a_test_stops_each_phase_at_its_share_of_the_data_budget() {
+    let server = TestServer::start(|asked, _| speed_server(asked)).await;
+    let budget = 8 * CHUNK;
+    // Plenty of time: the bytes, not the clock, end each phase.
+    let options = SpeedTestOptions {
+        download_time: Duration::from_secs(30),
+        upload_time: Duration::from_secs(30),
+        data_budget: budget,
+        ..quick()
+    };
+    let client = SpeedTestClient::with(&server.url(""), direct_client(), options);
+
+    let started = Instant::now();
+    let result = client.run(recorder().0, &CancellationToken::new()).await.unwrap();
+
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(result.download > 0.0 && result.upload > 0.0);
+    // At most one read or one upload piece per connection past each half.
+    let slack = 2 * 2 * 64 * 1024;
+    assert!(result.data_used >= budget && result.data_used <= budget + slack, "{}", result.data_used);
 }
