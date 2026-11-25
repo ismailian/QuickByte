@@ -1224,10 +1224,15 @@ impl MainWindow {
         cx.command(AppCommand::OpenDetails(item.id));
     }
 
-    /// Properties: the download's details, with no progress shown.
+    /// Properties: a finished download's details; any other one opens its
+    /// Download window, where its progress is.
     fn open_selected_properties(&mut self, cx: &mut WindowCx<'_>) {
         if let Some(item) = self.single(cx.vm) {
-            cx.open(DialogRequest::Properties(item.id));
+            if item.status == DownloadStatus::Completed {
+                cx.open(DialogRequest::Properties(item.id));
+            } else {
+                cx.command(AppCommand::OpenDetails(item.id));
+            }
         }
     }
 

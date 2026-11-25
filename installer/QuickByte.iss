@@ -2,7 +2,7 @@
 ;
 ; Normally compiled by scripts\build-release.ps1, which builds the release
 ; binaries, stages them under their shipped names and runs:
-;   ISCC.exe /DAppVersion=1.29.0 /DSourceDir=dist\stage installer\QuickByte.iss
+;   ISCC.exe /DAppVersion=1.29.1 /DSourceDir=dist\stage installer\QuickByte.iss
 ;
 ; THE UPGRADE FROM THE C# BUILD (MIGRATION.md §6) RESTS ON THIS FILE:
 ;   * AppId is the C# installer's AppId. Inno therefore treats this setup as an
@@ -112,6 +112,8 @@ Type: files; Name: "{app}\*.pdb"
 Source: "{#SourceDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\{#AgentExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\{#CliExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; The browser extension, unpacked, for chrome://extensions > Load unpacked until it has a store listing.
+Source: "..\browser\chrome\*"; DestDir: "{app}\Browser Extension"; Excludes: "*.md,manifest.firefox.json"; Flags: ignoreversion recursesubdirs
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Comment: "Multi-connection download manager"
