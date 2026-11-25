@@ -21,7 +21,7 @@ version = "1.29.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["QuickByte"]
-license = "LicenseRef-Proprietary"
+license = "MIT"
 publish = false
 homepage = "https://quickbyte-app.pages.dev"
 

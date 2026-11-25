@@ -70,3 +70,7 @@ Everything lives where the C# build kept it, in `%APPDATA%\QuickByte`: `settings
 `downloads.json`, `queues.json` and the `temp` chunk folder. An upgrade carries every download,
 queue, setting, saved password and the browser pairing token across unchanged. The files stay
 readable by the C# build, so rolling back is safe as well.
+
+## License
+
+QuickByte is released under the [MIT License](LICENSE).
