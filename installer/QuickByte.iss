@@ -33,7 +33,7 @@
 #define AppPublisher "Cyberliberty, Inc."
 #define AppUrl "https://quickbyte-app.pages.dev/"
 
-; Set once the extension has a Chrome Web Store listing (see browser\chrome-extension\STORE.md).
+; Set once the extension has a Chrome Web Store listing (see browser\chrome\STORE.md).
 ; The browser-integration task and registry entries stay inert until then.
 ;#define ChromeExtensionId "the-id-the-store-gave-you"
 #define ChromeWebStoreUpdateUrl "https://clients2.google.com/service/update2/crx"
@@ -112,9 +112,6 @@ Type: files; Name: "{app}\*.pdb"
 Source: "{#SourceDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\{#AgentExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\{#CliExeName}"; DestDir: "{app}"; Flags: ignoreversion
-#if FileExists("..\..\extensions\chrome\chrome-extension.crx")
-Source: "..\..\extensions\chrome\chrome-extension.crx"; DestDir: "{app}\extensions\chrome"; Flags: ignoreversion
-#endif
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Comment: "Multi-connection download manager"
@@ -143,8 +140,6 @@ Filename: "{app}\{#AppExeName}"; Parameters: "--minimized"; Flags: nowait runaso
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""QuickByte Queue Wake ({username})"" /F"; Flags: runhidden; RunOnceId: "DeleteWakeTask"
 
 [UninstallDelete]
-Type: dirifempty; Name: "{app}\extensions\chrome"
-Type: dirifempty; Name: "{app}\extensions"
 Type: dirifempty; Name: "{app}"
 
 [Code]
