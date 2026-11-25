@@ -37,6 +37,7 @@ pub mod main;
 pub mod new_download;
 pub mod power_countdown;
 pub mod prompt;
+pub mod properties;
 pub mod queues;
 pub mod refresh_address;
 pub mod settings;
@@ -62,6 +63,8 @@ pub enum WindowKind {
     Details(Uuid),
     /// Replaces the details window when a download finishes (`DownloadCompleteForm`).
     Complete(Uuid),
+    /// A download's properties: what is known about it, with no progress shown.
+    Properties(Uuid),
     /// Add New Download. Several may be open: each browser capture brings its own link.
     NewDownload(u64),
     Batch,
@@ -110,6 +113,8 @@ pub enum DialogRequest {
     },
     Checksum(Uuid),
     RefreshAddress(Uuid),
+    /// Properties of one download (row menu, Downloads menu, Alt+Enter).
+    Properties(Uuid),
     About,
     /// Tasks > Speed Test. The test starts as the window opens.
     SpeedTest,
@@ -284,6 +289,7 @@ pub fn build_dialog(
             vm,
             shell.clipboard_text(),
         )),
+        DialogRequest::Properties(id) => Box::new(properties::PropertiesWindow::new(id)),
         DialogRequest::About => Box::new(about::AboutWindow),
         DialogRequest::SpeedTest => Box::new(speed_test::SpeedTestWindow::new()),
         DialogRequest::PowerCountdown {

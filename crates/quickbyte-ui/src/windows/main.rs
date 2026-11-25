@@ -79,6 +79,8 @@ enum Answer {
     Remove { ids: Vec<Uuid>, delete_files: bool },
     Stop(Vec<Uuid>),
     DeleteCompleted(Vec<Uuid>),
+    /// VirusTotal is off: Options, where it is switched on.
+    OpenOptions,
     Ok,
 }
 
@@ -377,8 +379,15 @@ impl MainWindow {
         if shortcut(ui, Modifiers::NONE, Key::Delete) && commands.delete {
             self.ask_remove(cx.vm);
         }
+        // Before plain Enter, which would otherwise take the key.
+        if shortcut(ui, Modifiers::ALT, Key::Enter) {
+            self.open_selected_properties(cx);
+        }
         if shortcut(ui, Modifiers::NONE, Key::Enter) {
             self.activate(cx);
+        }
+        if ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy))) {
+            self.copy_selected_links(ui, cx.vm);
         }
         for (key, step) in [(Key::ArrowDown, 1i64), (Key::ArrowUp, -1)] {
             let shift = ui.input(|i| i.modifiers.shift);
@@ -495,10 +504,10 @@ impl MainWindow {
                     ui,
                     Some(Icon::Properties),
                     "Properties...",
-                    Some("Enter"),
+                    Some("Alt+Enter"),
                     c.properties,
                 ) {
-                    self.open_selected_details(cx);
+                    self.open_selected_properties(cx);
                 }
                 if controls::menu_item(ui, Some(Icon::Retry), "Retry", None, c.retry) {
                     self.retry_selected(cx);
@@ -612,26 +621,6 @@ impl MainWindow {
             .clicked()
             {
                 self.ask_delete_completed(cx.vm);
-            }
-            controls::toolbar_separator(ui);
-            if controls::toolbar_button(
-                ui,
-                Icon::Properties,
-                "Properties",
-                "Show the download's details (Enter)",
-                c.properties,
-            )
-            .clicked()
-            {
-                self.open_selected_details(cx);
-            }
-            if controls::toolbar_button(ui, Icon::Queue, "Queues", "Queues and scheduler", true)
-                .clicked()
-            {
-                cx.open(DialogRequest::Queues);
-            }
-            if controls::toolbar_button(ui, Icon::Settings, "Options", "Options", true).clicked() {
-                cx.open(DialogRequest::Settings);
             }
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1077,9 +1066,10 @@ impl MainWindow {
         };
         let mut group = MenuGroups::default();
 
+        // Open: the file, where it is, or the transfer itself.
         if let Some(item) = single {
             if actions::can_open_file(item, &cx.shell)
-                && group.item(ui, Some(Icon::OpenFile), "Open File")
+                && group.item_with(ui, Some(Icon::OpenFile), "Open File", "Enter")
             {
                 self.open_selected_file(cx);
             }
@@ -1088,62 +1078,79 @@ impl MainWindow {
             {
                 self.open_selected_folder(cx);
             }
-            if actions::can_verify_checksum(item, &cx.shell)
-                && group.item(ui, Some(Icon::CheckCircle), "Verify Checksum...")
+            if item.status != DownloadStatus::Completed
+                && group.item(ui, Some(Icon::Properties), "Show Download Progress")
             {
-                cx.open(DialogRequest::Checksum(item.id));
+                cx.command(AppCommand::OpenDetails(item.id));
             }
         }
         group.next();
+
+        // The transfer: start, hold, end, again — and a new address for one
+        // whose link has died.
         if count(actions::can_resume) > 0
-            && group.item(
-                ui,
-                Some(Icon::Resume),
-                &label("Resume", count(actions::can_resume)),
-            )
+            && group.item(ui, Some(Icon::Resume), &label("Resume", count(actions::can_resume)))
         {
             self.resume_selected(cx);
         }
         if count(actions::can_pause) > 0
-            && group.item(
-                ui,
-                Some(Icon::Pause),
-                &label("Pause", count(actions::can_pause)),
-            )
+            && group.item(ui, Some(Icon::Pause), &label("Pause", count(actions::can_pause)))
         {
             self.pause_selected(cx);
         }
         if count(actions::can_stop) > 0
-            && group.item(
-                ui,
-                Some(Icon::Stop),
-                &label("Stop", count(actions::can_stop)),
-            )
+            && group.item(ui, Some(Icon::Stop), &label("Stop", count(actions::can_stop)))
         {
             self.stop_selected(cx);
         }
         if count(actions::can_retry) > 0
-            && group.item(
-                ui,
-                Some(Icon::Retry),
-                &label("Retry", count(actions::can_retry)),
-            )
+            && group.item(ui, Some(Icon::Retry), &label("Retry", count(actions::can_retry)))
         {
             self.retry_selected(cx);
         }
         if let Some(item) = single
             && actions::can_refresh_address(item)
-            && group.item(
-                ui,
-                Some(Icon::RefreshAddress),
-                "Refresh Download Address...",
-            )
+            && group.item(ui, Some(Icon::RefreshAddress), "Refresh Download Address...")
         {
             cx.open(DialogRequest::RefreshAddress(item.id));
         }
         group.next();
+
+        // Is the file safe and intact?
+        if let Some(item) = single
+            && actions::can_verify_checksum(item, &cx.shell)
+            && group.item(ui, Some(Icon::CheckCircle), "Verify Checksum...")
+        {
+            cx.open(DialogRequest::Checksum(item.id));
+        }
+        // Any download: one from before the check was on, or one to check
+        // again. The scanner skips any it is already checking.
+        if group.item(ui, Some(Icon::Shield), &label("Scan with VirusTotal", selection.len()))
+        {
+            self.scan_selected(cx);
+        }
+        group.next();
+
+        // The download as an entry in the list: its link, its queue, removing
+        // it, and what is known about it.
+        let copy = if many {
+            format!("Copy Links ({})", selection.len())
+        } else {
+            "Copy Link".to_string()
+        };
+        if group.item_with(ui, Some(Icon::Copy), &copy, "Ctrl+C") {
+            self.copy_selected_links(ui, cx.vm);
+        }
+        let delete = if many {
+            format!("Delete {} Downloads...", selection.len())
+        } else {
+            "Delete...".to_string()
+        };
+        if group.item_with(ui, Some(Icon::Delete), &delete, "Del") {
+            self.ask_remove(cx.vm);
+        }
         group.separator(ui);
-        ui.menu_button(RichText::new("Add to Queue"), |ui| {
+        controls::submenu(ui, Icon::Queue, "Move to Queue", |ui| {
             // Rebuilt per opening: a stale queue name here would file a download
             // into the wrong place.
             for queue in cx.vm.queues.clone() {
@@ -1172,18 +1179,10 @@ impl MainWindow {
             let ids: Vec<Uuid> = selection.iter().map(|i| i.id).collect();
             cx.services.queues.remove_from_queues(&ids);
         }
-        group.next();
-        let remove = if many {
-            format!("Remove {} Downloads", selection.len())
-        } else {
-            "Remove".to_string()
-        };
-        if group.item(ui, Some(Icon::Delete), &remove) {
-            self.ask_remove(cx.vm);
-        }
-        group.next();
-        if single.is_some() && group.item(ui, Some(Icon::Properties), "Properties...") {
-            self.open_selected_details(cx);
+        if single.is_some()
+            && group.item_with(ui, Some(Icon::Properties), "Properties", "Alt+Enter")
+        {
+            self.open_selected_properties(cx);
         }
     }
 
@@ -1225,9 +1224,43 @@ impl MainWindow {
         cx.command(AppCommand::OpenDetails(item.id));
     }
 
-    fn open_selected_details(&mut self, cx: &mut WindowCx<'_>) {
+    /// Properties: the download's details, with no progress shown.
+    fn open_selected_properties(&mut self, cx: &mut WindowCx<'_>) {
         if let Some(item) = self.single(cx.vm) {
-            cx.command(AppCommand::OpenDetails(item.id));
+            cx.open(DialogRequest::Properties(item.id));
+        }
+    }
+
+    /// Scan with VirusTotal: a check of each selected download (the scanner
+    /// skips any it is already checking). With the check off (or no key) there is nothing
+    /// to scan with, so the user is told where to switch it on.
+    fn scan_selected(&mut self, cx: &mut WindowCx<'_>) {
+        if !cx.vm.settings.virus_total_ready() {
+            self.prompt = Some(
+                Prompt::new(
+                    "Scan with VirusTotal",
+                    "VirusTotal checks are off.\nTurn them on and enter your API key in Options > VirusTotal, \
+                     then scan again."
+                        .to_string(),
+                    PromptIcon::Info,
+                    Answer::Cancel,
+                )
+                .button("Cancel", Answer::Cancel, ButtonKind::Secondary)
+                .button("Open Options", Answer::OpenOptions, ButtonKind::Primary),
+            );
+            return;
+        }
+        let ids: Vec<Uuid> = self.selection(cx.vm).into_iter().map(|i| i.id).collect();
+        for id in ids {
+            cx.services.virus_total.scan(id);
+        }
+    }
+
+    /// The selected downloads' addresses, one per line, in list order.
+    fn copy_selected_links(&self, ui: &Ui, vm: &ViewModel) {
+        let links: Vec<&str> = self.selection(vm).iter().map(|i| i.url.as_str()).collect();
+        if !links.is_empty() {
+            ui.ctx().copy_text(links.join("\r\n"));
         }
     }
 
@@ -1390,6 +1423,7 @@ impl MainWindow {
     fn on_answer(&mut self, answer: Answer, cx: &mut WindowCx<'_>) {
         match answer {
             Answer::Cancel | Answer::Ok => {}
+            Answer::OpenOptions => cx.open(DialogRequest::Settings),
             Answer::Remove { ids, delete_files } => {
                 for id in ids {
                     cx.services.downloads.remove(id, delete_files);
@@ -1456,6 +1490,11 @@ impl MenuGroups {
         self.flush(ui);
         self.in_group = true;
         controls::menu_item(ui, icon, text, None, true)
+    }
+    fn item_with(&mut self, ui: &mut Ui, icon: Option<Icon>, text: &str, shortcut: &str) -> bool {
+        self.flush(ui);
+        self.in_group = true;
+        controls::menu_item(ui, icon, text, Some(shortcut), true)
     }
     fn separator(&mut self, ui: &mut Ui) {
         self.flush(ui);

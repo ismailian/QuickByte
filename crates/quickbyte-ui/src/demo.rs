@@ -1432,6 +1432,9 @@ impl VirusTotalService for DemoVirusTotal {
         self.hub.subscribe()
     }
     fn start(&self) {}
+    fn scan(&self, _download_id: Uuid) -> bool {
+        false
+    }
     fn resolve(&self, download_id: Uuid, keep: bool) {
         if !keep {
             self.downloads.remove(download_id, false);

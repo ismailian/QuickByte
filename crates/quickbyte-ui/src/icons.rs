@@ -45,6 +45,10 @@ pub enum Icon {
     Exit,
     Update,
     SpeedTest,
+    /// Copy Link: two sheets, one over the other.
+    Copy,
+    /// Scan with VirusTotal: a shield with a tick.
+    Shield,
     // Sidebar tree and rows
     Folder(Option<Color32>),
     Category(FileCategory),
@@ -55,7 +59,7 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon that takes nothing but a size — the toolbar and menu set.
-    pub const SIMPLE: [Icon; 21] = [
+    pub const SIMPLE: [Icon; 23] = [
         Icon::AddUrl,
         Icon::Resume,
         Icon::Pause,
@@ -77,6 +81,8 @@ impl Icon {
         Icon::Exit,
         Icon::Update,
         Icon::SpeedTest,
+        Icon::Copy,
+        Icon::Shield,
     ];
 }
 
@@ -148,6 +154,8 @@ fn draw(g: &Canvas, icon: Icon) {
         Icon::Exit => exit(g),
         Icon::Update => update(g),
         Icon::SpeedTest => speed_test(g),
+        Icon::Copy => copy(g),
+        Icon::Shield => shield(g),
         Icon::Folder(tint) => folder(g, tint),
         Icon::Category(category) => category_icon(g, category),
         Icon::StatusDot(color) => status_dot(g, color),
@@ -641,6 +649,36 @@ fn properties(g: &Canvas) {
     g.ellipse_stroke(g.r(0.12, 0.12, 0.76, 0.76), pen);
     g.ellipse(g.r(0.44, 0.24, 0.13, 0.13), p.accent);
     g.rect(g.r(0.44, 0.44, 0.13, 0.32), p.accent);
+}
+
+fn copy(g: &Canvas) {
+    let p = theme::palette();
+    let pen = g.stroke(g.s(0.08).max(1.3), g.c(p.accent));
+    let radius = g.s(0.1);
+    // The sheet behind, then the copy in front of it, filled so the back one's
+    // corner is hidden.
+    g.round_rect_stroke(rounded_rect_points(g.r(0.14, 0.12, 0.46, 0.56), radius), pen);
+    let front = g.r(0.38, 0.32, 0.48, 0.58);
+    g.round_rect(front, radius, p.surface);
+    g.round_rect_stroke(rounded_rect_points(front, radius), pen);
+}
+
+fn shield(g: &Canvas) {
+    let p = theme::palette();
+    // Flat shoulders, sides that curve in to a point at the bottom.
+    let mut outline = vec![g.p(0.5, 0.08), g.p(0.84, 0.2), g.p(0.84, 0.46)];
+    for i in 1..=6 {
+        let t = i as f32 / 6.0;
+        outline.push(g.p(0.84 - 0.34 * t, 0.46 + 0.46 * t * (2.0 - t) / 1.0 * 0.95));
+    }
+    for i in (0..6).rev() {
+        let t = i as f32 / 6.0;
+        outline.push(g.p(0.16 + 0.34 * t, 0.46 + 0.46 * t * (2.0 - t) / 1.0 * 0.95));
+    }
+    outline.push(g.p(0.16, 0.2));
+    g.polygon(outline, p.accent);
+    let pen = g.stroke(g.s(0.09).max(1.4), WHITE);
+    g.lines(vec![g.p(0.34, 0.5), g.p(0.46, 0.62), g.p(0.68, 0.38)], pen);
 }
 
 fn queue(g: &Canvas) {

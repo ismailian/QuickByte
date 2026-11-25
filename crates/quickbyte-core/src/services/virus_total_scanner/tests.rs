@@ -634,3 +634,34 @@ async fn malicious_votes_below_the_threshold_take_the_suspicious_action() {
     assert!(fx.downloads.removed.lock().is_empty());
     assert!(fx.downloads.get(id).is_some());
 }
+
+#[tokio::test]
+async fn a_download_from_before_the_check_is_scanned_on_request() {
+    // Not started yet: the download was there before the check was switched on.
+    let fx = Fixture::new(|_| {});
+    *fx.api.url_report.lock() = clean();
+    *fx.api.file_report.lock() = clean();
+    fx.folder.write_file("tool.exe", b"hello");
+    let id = fx.downloads.add(fx.item(DownloadStatus::Completed));
+    let fx = fx.start();
+    assert!(fx.downloads.report(id).is_none(), "nothing checks it by itself");
+
+    assert!(fx.scanner.scan(id));
+    assert!(!fx.scanner.scan(id), "one check at a time");
+
+    let report = fx.finished(id).await;
+    assert_eq!(report.verdict, VirusTotalVerdict::Clean);
+    assert_eq!(report.source, Some(VirusTotalSource::File));
+    assert_eq!(report.sha256.as_deref(), Some(HELLO_SHA256));
+}
+
+#[tokio::test]
+async fn a_scan_is_refused_while_the_check_is_off() {
+    let fx = Fixture::new(|s| s.virus_total_enabled = false).start();
+    fx.folder.write_file("tool.exe", b"hello");
+    let id = fx.downloads.add(fx.item(DownloadStatus::Completed));
+
+    assert!(!fx.scanner.scan(id));
+    assert!(fx.downloads.report(id).is_none());
+    assert!(fx.api.calls().is_empty());
+}

@@ -372,6 +372,12 @@ pub trait VirusTotalService: Send + Sync {
     /// The user's answer to [`VirusTotalEvent::DecisionNeeded`]: keep the
     /// download (and carry on with it) or delete it and its file.
     fn resolve(&self, download_id: Uuid, keep: bool);
+    /// Checks one download now, on request — one added before the check was
+    /// switched on, or one to check again. Starts over from its address, as a
+    /// new download's check does. Returns whether a check started: not when the
+    /// check is off (or has no key), the download is gone, or one is already
+    /// running for it.
+    fn scan(&self, download_id: Uuid) -> bool;
     /// Whether VirusTotal accepts `api_key` — Options' Check button.
     async fn check_api_key(&self, api_key: &str, cancel: &CancellationToken) -> Result<()>;
 }

@@ -501,6 +501,18 @@ impl traits::VirusTotalService for VirusTotalScanner {
         }
     }
 
+    fn scan(&self, download_id: Uuid) -> bool {
+        if self.ready().is_none() || self.is_checking(download_id) {
+            return false;
+        }
+        let Some(item) = self.downloads.get(download_id) else { return false };
+        // A fresh report: whatever an earlier check found, or was told, is
+        // replaced by what this one finds.
+        self.save(download_id, &VirusTotalReport::started());
+        self.begin(download_id, item.status);
+        true
+    }
+
     fn resolve(&self, download_id: Uuid, keep: bool) {
         let waiting = self.scans.lock().get_mut(&download_id).and_then(|s| s.answer.take());
         if let Some(answer) = waiting {

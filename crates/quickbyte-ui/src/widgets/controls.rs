@@ -208,6 +208,25 @@ pub fn menu_item(
     enabled && response.response.clicked()
 }
 
+/// A submenu entry with a 16 px icon in the margin, lined up with
+/// [`menu_item`]s around it.
+pub fn submenu<R>(
+    ui: &mut Ui,
+    icon: Icon,
+    text: &str,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<Option<R>> {
+    let id = IdSalt::new(("submenu_icon", text));
+    let response = ui.menu_button((Atom::custom(id, Vec2::splat(16.0)), RichText::new(text)), add);
+    let rect = response.response.rect;
+    let at = Rect::from_min_size(
+        egui::pos2(rect.left() + ui.spacing().button_padding.x, rect.center().y - 8.0),
+        Vec2::splat(16.0),
+    );
+    icons::paint_ex(ui.painter(), at, icon, false);
+    response
+}
+
 /// A check-mark menu entry (View > Toolbar).
 pub fn menu_check(ui: &mut Ui, text: &str, checked: &mut bool) -> bool {
     let id = IdSalt::new(("menu_check", text));
